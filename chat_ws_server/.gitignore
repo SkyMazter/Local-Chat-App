@@ -1,0 +1,42 @@
+# Ignore the target directory where Cargo builds the project
+/target/
+
+# Ignore build artifacts and dependency directories
+**/*.rs.bk
+
+# Cargo's local configuration (not meant to be shared)
+.cargo/config.toml
+.cargo/credentials
+
+# Ignore backups created by rustfmt or other tools
+**/*~ 
+**/*.swp
+**/*.swo
+**/.DS_Store
+
+# Ignore IDE and editor settings
+# VS Code
+.vscode/
+*.code-workspace
+
+# IntelliJ (RustRover, CLion, etc.)
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs and temporary files
+*.log
+
+# Tauri-specific
+/src-tauri/target/
+/src-tauri/node_modules/
