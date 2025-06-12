@@ -22,9 +22,12 @@ async fn send_message(msg:String){
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet]).setup( |_app| {
+        .invoke_handler(tauri::generate_handler![greet, send_message]).setup( |app| {
+
+            let handle = app.handle().clone();
+
             tauri::async_runtime::spawn(async move {
-                ws_client::run_ws_client().await;
+                ws_client::run_ws_client(handle).await;
             });
             Ok(())
         })
