@@ -1,12 +1,24 @@
+use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
-use std::sync::{Arc, Mutex};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
 
 type Tx = mpsc::UnboundedSender<Message>; // Sender type alias
-type PeerList = Arc<Mutex<Vec<Tx>>>; // Shared list of peers
+type PeerList = Arc<Mutex<HashMap<std::net::SocketAddr, Tx>>>; // Shared list of peers
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChatMessage {
+    pub user_id: String,
+    pub timestamp: DateTime<Utc>,
+    pub content: String,
+}
 
 pub async fn run_ws_server() {
     let addr = "0.0.0.0:9001"; // Listen on all interfaces, port 9001
@@ -25,7 +37,7 @@ pub async fn run_ws_server() {
 
     println!("Succesfully listening on port 9001!");
 
-    let peers: PeerList = Arc::new(Mutex::new(Vec::new()));
+    let peers: PeerList = Arc::new(Mutex::new(HashMap::new()));
 
     //loop still runs while the listener does not throw an error, if the listener is ok, it will return variables stream and _addr, which are usable in the loop.
     while let Ok((stream, soc_ddr)) = listener.accept().await {
@@ -51,22 +63,31 @@ pub async fn run_ws_server() {
 
             // Create a channel to send messages *to this client* (tx = transmiter, rx = reciever)
             let (tx, mut rx) = mpsc::unbounded_channel();
-            peers.lock().unwrap().push(tx.clone());
+            // Add this peer's sender to the list
+            peers.lock().unwrap().insert(soc_ddr, tx);
 
             // Task 1: handle messages *from a client*
             let recv_task = {
-                let peers = peers.clone();
-
-                //spawns new thread for each connection
+                let peers_clone = peers.clone(); // Clone for the recv_task
                 tokio::spawn(async move {
-                    //while we still have good messages from the ws_reciever, load them into all the  client's reciever (rx) channel, using our transmitter
                     while let Some(Ok(msg)) = ws_receiver.next().await {
-                        if msg.is_text() || msg.is_binary() {
-                            println!("Received: {:?}", msg);
+                        if msg.is_binary() || msg.is_text() {
+                            match serde_json::from_str::<ChatMessage>(&msg.to_string()) {
+                                Ok(mut chat_message) => {
+                                    chat_message.timestamp = Utc::now();
+                                    let serialized_message = serde_json::to_string(&chat_message)
+                                        .expect("Failed to serialize ChatMessage");
 
-                            let peers = peers.lock().unwrap();
-                            for peer in peers.iter() {
-                                let _ = peer.send(msg.clone()); // 👈 THIS is where msg goes into rx
+                                    let peers = peers_clone.lock().unwrap(); // Use peers_for_recv_task
+                                    for (&peer_addr, peer) in peers.iter() {
+                                        let _ =
+                                            peer.send(Message::Text(serialized_message.clone()));
+
+                                        println!("Broadcasted Message form {}", peer_addr);
+                                    }
+                                }
+
+                                Err(e) => eprintln!("Failed to parse message from: {}", e),
                             }
                         }
                     }
@@ -91,10 +112,8 @@ pub async fn run_ws_server() {
 
             // On disconnect: remove the sender from the peer list
             //“Go through each peer in the list (peers), call it p. For each one, compare it to the tx (which belongs to the client that disconnected). If it is the same, remove it. If it's different, keep it.”
-            peers
-                .lock()
-                .unwrap()
-                .retain(|p: &mpsc::UnboundedSender<Message>| !p.same_channel(&tx));
+            peers.lock().unwrap().remove(&soc_ddr); // Remove peer on disconnect
+
             println!("❌ Connection closed");
         });
     }
